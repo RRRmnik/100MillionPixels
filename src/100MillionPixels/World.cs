@@ -279,12 +279,6 @@ namespace _100MillionPixels
                     int random = Random.Shared.Next(availablePositions.Count);
 
                     positionToAdd = availablePositions[random];
-
-                    Console.WriteLine($"available: {availablePositions.Count} | chosen: {random}");
-                }
-                else
-                {
-                    Console.WriteLine("no available");
                 }
             }
 
