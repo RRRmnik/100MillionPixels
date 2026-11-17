@@ -1,10 +1,6 @@
 ﻿using Raylib_cs;
-using System;
-using System.Collections.Generic;
-using System.Linq;
+using System.Diagnostics;
 using System.Numerics;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace _100MillionPixels
 {
@@ -20,7 +16,8 @@ namespace _100MillionPixels
     {
         public const float Radius = 0.1f;
 
-        public const float LightningInterval = 0.05f;
+        public const float LightningInterval = 0.075f;
+        public const float LightningRadius = 6.0f;
 
         public BallType Type;
 
@@ -33,6 +30,8 @@ namespace _100MillionPixels
 
         private float _lightningTimer = 0.0f;
 
+        private float _accumulated = 0.0f;
+
         public Ball(BallType type, Vector2 position, Vector2 direction)
         {
             Type = type;
@@ -40,57 +39,83 @@ namespace _100MillionPixels
             Direction = Vector2.Normalize(direction);
         }
 
-        public void Tick(float dt, World world)
+        public void Tick(float dt, float timeScale, World world)
         {
-            int Steps = (int)Math.Ceiling(120.0f * dt * Velocity.Length());
-            Steps = Math.Clamp(Steps, 1, 3000);
-            float stepDt = dt / Steps;
+            if (!world.IsInBounds(Position)) { return; }
 
-            for (int i = 0; i < Steps; i++) Step(stepDt, world);
+            RaycastHit hit = world.Raycast(Position, Direction, Speed * dt * 1.0005f + _accumulated);
+            if (hit.IsHit)
+            {
+                world.TryHitTileAt(hit.TilePosition, 1);
+                if (Type == BallType.POISON) world.PoisonTileAt(hit.TilePosition);
 
+                if (!(Type == BallType.PIERCING && !world.HasTileAt(hit.TilePosition)))
+                {
+                    Position = hit.Point + hit.Normal * 0.01f;
+                    Direction = Vector2.Reflect(Direction, hit.Normal);
+
+                    _accumulated = MathF.Max(0.0f, Speed * dt - hit.Distance);
+                }
+                else
+                {
+                    Position = hit.Point + Direction * 0.01f;
+                    _accumulated = MathF.Max(0.0f, _accumulated + Speed * dt - hit.Distance - 0.01f);
+                }
+            }
+            else
+            {
+                Position += Velocity * dt + Direction * _accumulated;
+                _accumulated = 0.0f;
+            }
+
+            int index = world.GetIndexFromPosition(Position);
+            if (!world.Tiles[index].IsGoy)
+            {
+                int Steps = (int)Math.Ceiling(60.0f * timeScale * Velocity.Length());
+                Steps = Math.Clamp(Steps, 1, 3000);
+                float stepDt = dt / Steps;
+
+                for (int i = 0; i < Steps; i++) Step(stepDt, world);
+            }
+        }
+
+        public void Step(float dt, World world)
+        {
+            if (LightningTimerStep(dt))
+            {
+                Lightning(world);
+            }
+        }
+
+        public bool LightningTimerStep(float dt)
+        {
             if (Type == BallType.LIGHTNING)
             {
                 _lightningTimer -= dt;
                 if (_lightningTimer <= 0.0f)
                 {
                     _lightningTimer += LightningInterval;
-                    Lightning(world);
+                    return true;
                 }
             }
-
-            //Console.WriteLine(Steps);
+            return false;
         }
 
         public void Lightning(World world)
         {
-            /*
-            const int MaxOffset = 10;
-            for (int ox = -MaxOffset; ox <= MaxOffset; ox++)
-            {
-                for (int oy = -MaxOffset; oy <= MaxOffset; oy++)
-                {
-                    if (Raylib.GetRandomValue(0, 3) != 0) break;
-
-                    Vector2 otherPosition = Position + Vector2.UnitX * ox + Vector2.UnitY * oy;
-                    if (!world.IsInBounds(otherPosition)) continue;
-
-                    world.TryHitTileAt(otherPosition);
-                }
-            }
-            */
-
             float x = Random.Shared.NextSingle() - 0.5f;
             float y = Random.Shared.NextSingle() - 0.5f;
             Vector2 direction = Vector2.Normalize(new Vector2(x, y));
 
-            RaycastHit hit = world.Raycast(Position, direction, 4);
-            if (hit.IsHit)
+            RaycastHit hit = world.Raycast(Position, direction, LightningRadius);
+            if (hit.IsHit && world.IsDestructibleAt(hit.TilePosition))
             {
-                world.TryHitTileAt(hit.Position);
-                world.LightningEffects.Add(new LightningEffect(this, Position, hit.Position, 0.0f));
+                world.TryHitTileAt(hit.TilePosition);
+                world.LightningEffects.Add(new LightningEffect(this, hit.TilePosition, 0.0f));
             }
         }
 
+        /*
         public void Step(float dt, World world)
         {
             Vector2 currentDelta = Velocity * dt;
@@ -130,6 +155,7 @@ namespace _100MillionPixels
             }
             Position.Y = Raymath.Clamp(Position.Y, 0.5f, World.Height - 0.5f);
         }
+        */
 
         public void Draw()
         {

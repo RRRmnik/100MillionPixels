@@ -1,24 +1,45 @@
 ﻿using Raylib_cs;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Numerics;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace _100MillionPixels
 {
+    [Flags]
+    public enum TileFlags : byte
+    {
+        None = 0,
+        IsDestructible = 1 << 0,
+        IsGoy = 1 << 1
+    }
+
     public struct Tile
     {
         public byte Health;
-        public bool IsDestructible;
         public byte Light;
+        public TileFlags Flags;
+
+        public bool IsDestructible
+        {
+            readonly get => (Flags & TileFlags.IsDestructible) != 0;
+            set => Flags = value
+                ? (Flags | TileFlags.IsDestructible)
+                : (Flags & ~TileFlags.IsDestructible);
+        }
+
+        public bool IsGoy
+        {
+            readonly get => (Flags & TileFlags.IsGoy) != 0;
+            set => Flags = value
+                ? (Flags | TileFlags.IsGoy)
+                : (Flags & ~TileFlags.IsGoy);
+        }
     }
 
     public struct RaycastHit
     {
         public bool IsHit;
-        public Vector2 Position;
+        public Vector2 TilePosition;
+        public Vector2 Point;
         public Vector2 Normal;
         public float Distance;
     }
@@ -27,43 +48,45 @@ namespace _100MillionPixels
     {
         public const float Duration = 0.5f;
 
-        public LightningEffect(Ball ball, Vector2 startPosition, Vector2 endPosition, float lifetime)
+        public LightningEffect(Ball ball, Vector2 tilePosition, float lifetime)
         {
             Ball = ball;
-            StartPosition = startPosition;
-            EndPosition = endPosition;
+            TilePosition = tilePosition;
             Lifetime = lifetime;
         }
 
         public Ball Ball;
-        public Vector2 StartPosition;
-        public Vector2 EndPosition;
+        public Vector2 TilePosition;
         public float Lifetime;
     }
 
     public class World
     {
-        public const int Width = 1024;
-        public const int Height = 1024;
+        public const int Width = 256;
+        public const int Height = 256;
 
         public const int CenterX = Width / 2;
         public const int CenterY = Height / 2;
 
         public const int ArraySize = Width * Height;
 
+        public const int GoyDistance = 3;
+
         public Tile[] Tiles = new Tile[ArraySize];
 
-        public List<Vector2> PoisonedTiles = new List<Vector2>();
+        public HashSet<Vector2> PoisonedTiles = new HashSet<Vector2>();
 
-        public List<Vector2> TilesToLightUp = new List<Vector2>();
+        public HashSet<Vector2> DirtyTiles = new HashSet<Vector2>();
 
-        public List<LightningEffect> LightningEffects = new List<LightningEffect>();
-        public List<LightningEffect> LightningEffectsToDestroy = new List<LightningEffect>();
+        public HashSet<LightningEffect> LightningEffects = new HashSet<LightningEffect>();
+        public HashSet<LightningEffect> LightningEffectsToDestroy = new HashSet<LightningEffect>();
 
         public const float PoisonTickInterval = 1.0f;
         public int PoisonDamagePerTick = 1;
 
         private float _poisonTimer = PoisonTickInterval;
+
+        public event Action<int>? OnHit;
 
         public void Generate()
         {
@@ -76,7 +99,6 @@ namespace _100MillionPixels
                 float distance = Vector2.Distance(position, new Vector2(CenterX, CenterY));
                 if (distance > 6.5f)
                 {
-                    //HealthPoints[i] = Raylib.GetRandomValue(1, 3);
                     float value = PerlinNoise.FBM01(position * 0.05f, 4);
                     value = MathF.Pow(value, 2.0f);
                     Tiles[i].Health = (byte)Math.Clamp((int)(value * 8.0f), 1, 5);
@@ -91,8 +113,10 @@ namespace _100MillionPixels
                 {
                     Tiles[i].Health = 0;
 
-                    TilesToLightUp.Add(position);
+                    DirtyTiles.Add(position);
                 }
+
+                Tiles[i].IsGoy = false;
 
                 /*
                 if (x % 32 == 0 && (y < 7 || y > 9))
@@ -127,9 +151,8 @@ namespace _100MillionPixels
 
         public void UpdateLight()
         {
-            foreach (Vector2 position in TilesToLightUp)
-            {
-                const int MaxOffset = 5;
+            Parallel.ForEach(DirtyTiles, position => {
+                const int MaxOffset = 4;
                 const int MaxManhattanDistance = MaxOffset * 2;
                 for (int ox = -MaxOffset; ox <= MaxOffset; ox++)
                 {
@@ -149,18 +172,62 @@ namespace _100MillionPixels
                         Tiles[index].Light = Math.Max(light, Tiles[index].Light);
                     }
                 }
-            }
+            });
+        }
 
-            TilesToLightUp.Clear();
+        public void UpdateGoys()
+        {
+            Parallel.ForEach(DirtyTiles, position =>
+            {
+                const int MaxStartCheckOffset = GoyDistance;
+                for (int ox = -MaxStartCheckOffset; ox <= MaxStartCheckOffset; ox++)
+                {
+                    for (int oy = -MaxStartCheckOffset; oy <= MaxStartCheckOffset; oy++)
+                    {
+                        Vector2 otherPosition = position + Vector2.UnitX * ox + Vector2.UnitY * oy;
+                        if (!IsInBounds(otherPosition) || HasTileAt(otherPosition)) continue;
+
+                        CalculateGoy(otherPosition);
+                    }
+                }
+                int index = GetIndexFromPosition(position);
+            });
+        }
+
+        public void CalculateGoy(Vector2 position)
+        {
+            const int MaxDistanceCheckOffset = GoyDistance;
+            int minReached = int.MaxValue;
+            Vector2[] offsets = {
+                new Vector2( 0,  0),
+                new Vector2(-1,  0), new Vector2( 0,  1), new Vector2( 0, -1), new Vector2( 1,  0),
+                new Vector2(-2,  0), new Vector2(-1,  1), new Vector2(-1, -1), new Vector2( 0,  2),
+                new Vector2( 0, -2), new Vector2( 1,  1), new Vector2( 1, -1), new Vector2( 2,  0),
+            };
+
+            foreach (Vector2 offset in offsets)
+            {
+                Vector2 otherPosition = position + Vector2.UnitX * offset.X + Vector2.UnitY * offset.Y;
+                if (!IsInBounds(otherPosition) || !HasTileAt(otherPosition)) continue;
+
+                int manhattanDistance = Math.Abs((int)offset.X) + Math.Abs((int)offset.Y) - 1;
+
+                minReached = Math.Min(manhattanDistance, minReached);
+            }
+            int index = GetIndexFromPosition(position);
+
+            Tiles[index].IsGoy = minReached >= MaxDistanceCheckOffset;
         }
 
         public void Tick(float dt)
         {
             UpdateLight();
+            UpdateGoys();
+            DirtyTiles.Clear();
 
             _poisonTimer += dt;
 
-            if (_poisonTimer >= PoisonTickInterval)
+            while (_poisonTimer >= PoisonTickInterval)
             {
                 _poisonTimer -= PoisonTickInterval;
                 TickPoison();
@@ -183,14 +250,57 @@ namespace _100MillionPixels
 
         public void TickPoison()
         {
-            for (int i = PoisonedTiles.Count - 1; i >= 0; i--)
+            Vector2? positionToAdd = null;
+            foreach (Vector2 position in PoisonedTiles)
             {
-                TryHitTileAt(PoisonedTiles[i], PoisonDamagePerTick);
+                TryHitTileAt(position, PoisonDamagePerTick);
+
+                Vector2[] offsets = {
+                    new Vector2( 0.0f, 1.0f),
+                    new Vector2( 1.0f, 0.0f),
+                    new Vector2( 0.0f,-1.0f),
+                    new Vector2(-1.0f, 0.0f),
+                };
+
+                List<Vector2> availablePositions = new List<Vector2>();
+                foreach (Vector2 offset in offsets)
+                {
+                    Vector2 offsetted = position + offset;
+                    if (IsInBounds(offsetted) && HasTileAt(offsetted) && IsDestructibleAt(offsetted) && !PoisonedTiles.Contains(offsetted))
+                    {
+                        availablePositions.Add(offsetted);
+                    }
+                }
+
+                if (availablePositions.Count != 0)
+                {
+                    int last = availablePositions.Count - 1;
+
+                    int random = Random.Shared.Next(availablePositions.Count);
+
+                    positionToAdd = availablePositions[random];
+
+                    Console.WriteLine($"available: {availablePositions.Count} | chosen: {random}");
+                }
+                else
+                {
+                    Console.WriteLine("no available");
+                }
             }
+
+            if (positionToAdd.HasValue) PoisonedTiles.Add(positionToAdd.Value);
         }
 
-        public void Draw(Rectangle viewRect)
+        public void Draw(Rectangle viewRect, float fps)
         {
+            Color[] healthColors = {
+                Color.LightGray,
+                Color.Green,
+                Color.Red,
+                Color.Blue,
+                Color.Brown
+            };
+
             for (int i = 0; i < ArraySize; i++)
             {
                 Vector2 position = GetPositionFromIndex(i);
@@ -201,44 +311,60 @@ namespace _100MillionPixels
 
                 if (Tiles[i].Health != 0 && Tiles[i].Light != 0)
                 {
-                    Color[] healthColors = {
-                        Color.LightGray,
-                        Color.Green,
-                        Color.Red,
-                        Color.Blue,
-                        Color.Brown
-                    };
                     Color color = Tiles[i].IsDestructible ? healthColors[Tiles[i].Health - 1] : Color.White;
                     color.A = Tiles[i].Light;
 
                     Raylib.DrawRectangleV(position, Vector2.One, color);
+                }
 
-                    if (PoisonedTiles.Contains(position))
-                    {
-                        Vector2 center = position + Vector2.One * 0.5f;
+                /*
+                if (Tiles[i].Health == 0 && Tiles[i].IsGoy)
+                {
+                    Raylib.DrawRectangleV(position, Vector2.One, new Color(0.0f, 1.0f, 1.0f, 0.25f));
+                }
+                */
+            }
 
-                        float time = (float)Raylib.GetTime();
-                        float repeat = Raymath.Repeat(time, 1.0f);
-                        Vector2 size = Vector2.One * repeat;
+            if (fps < 30) return;
 
-                        Vector2 topLeft = center - size * Vector2.One * 0.5f;
+            Vector2 size = Vector2.One * _poisonTimer;
+            Color poisonColor = new Color(0.0f, _poisonTimer * 0.5f, 0.0f, _poisonTimer);
+            foreach (Vector2 position in PoisonedTiles)
+            {
+                if (PoisonedTiles.Contains(position))
+                {
+                    Vector2 center = position + Vector2.One * 0.5f;
 
-                        Color poisonColor = new Color(0.0f, repeat, 0.0f, 1.0f - repeat);
-                        Raylib.DrawRectangleV(topLeft, size, poisonColor);
-                    }
+                    Vector2 topLeft = center - size * Vector2.One * 0.5f;
+
+                    Raylib.DrawRectangleV(topLeft, size, poisonColor);
                 }
             }
 
+            Vector2 tileRandomization = new Vector2(
+                Random.Shared.NextSingle(),
+                Random.Shared.NextSingle()
+            );
+
             foreach (LightningEffect effect in LightningEffects)
             {
-                Vector2 tilePosition = new Vector2((int)effect.EndPosition.X, (int)effect.EndPosition.Y);
-                Vector2 tileCenterPosition = tilePosition + Vector2.One * 0.5f;
-                Vector2 tilePositionRandomized = tilePosition + new Vector2(
-                    Random.Shared.NextSingle(),
-                    Random.Shared.NextSingle()
-                );
+                Vector2 tilePosition = new Vector2((int)effect.TilePosition.X, (int)effect.TilePosition.Y);
+                float distanceSquared = Vector2.DistanceSquared(tilePosition, effect.Ball.Position);
 
-                Raylib.DrawLineV(effect.Ball.Position, tilePositionRandomized, Color.Yellow);
+                float t = 1.0f - effect.Lifetime / LightningEffect.Duration;
+
+                Vector2 tileCenterPosition = tilePosition + Vector2.One * 0.5f;
+                Vector2 tileSize = Vector2.One * t;
+                Vector2 tileTopLeft = tileCenterPosition - tileSize * Vector2.One * 0.5f;
+
+                Color lightningColor = Color.Yellow;
+                Color tileColor = new Color(lightningColor.R, lightningColor.G, lightningColor.B, t);
+
+                Raylib.DrawRectangleV(tileTopLeft, tileSize, tileColor);
+
+                Vector2 tilePositionRandomized = tilePosition + tileRandomization;
+
+                Raylib.DrawLineV(effect.Ball.Position, tilePositionRandomized, lightningColor);
             }
         }
 
@@ -255,6 +381,17 @@ namespace _100MillionPixels
             // тайл, в котором стартуем
             int mapX = (int)MathF.Floor(origin.X);
             int mapY = (int)MathF.Floor(origin.Y);
+
+            // старт внутри тайла — сразу считаем попадание в точке запуска
+            if (IsInBounds(mapX, mapY) && HasTileAt(mapX, mapY))
+            {
+                hit.IsHit = true;
+                hit.TilePosition = new Vector2(mapX, mapY);
+                hit.Point = origin;          // точка запуска
+                hit.Distance = 0f;
+                hit.Normal = Vector2.Zero;      // грани нет — нормаль не определена
+                return hit;
+            }
 
             // расстояние по параметру t между соседними линиями сетки по каждой оси
             // (direction нормализован => t == реальная дистанция)
@@ -315,7 +452,11 @@ namespace _100MillionPixels
                 if (HasTileAt(mapX, mapY))
                 {
                     hit.IsHit = true;
-                    hit.Position = new Vector2(mapX, mapY);
+
+                    hit.TilePosition = new Vector2(mapX, mapY);
+                    // позиция попадания луча, а не координаты тайла
+                    hit.Point = origin + direction * distance;
+
                     hit.Distance = distance;
 
                     hit.Normal = side == 0
@@ -341,12 +482,6 @@ namespace _100MillionPixels
             }
         }
 
-        public static async Task DelayedAction(Action action, int delayMilliseconds)
-        {
-            await Task.Delay(delayMilliseconds);
-            action?.Invoke();
-        }
-
         public void PoisonTileAt(Vector2 position) => PoisonTileAt((int)position.X, (int)position.Y);
 
         public void TryHitTileAt(int x, int y, int damage = 1)
@@ -367,8 +502,11 @@ namespace _100MillionPixels
             {
                 Vector2 position = new Vector2(x, y);
                 PoisonedTiles.Remove(position);
-                TilesToLightUp.Add(position);
+                DirtyTiles.Add(position);
             }
+
+            int healthDamaged = Tiles[index].Health - newHealth;
+            OnHit?.Invoke(healthDamaged);
 
             Tiles[index].Health = (byte)newHealth;
         }

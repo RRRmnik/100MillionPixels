@@ -1,9 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.36408.4 d17.14
+VisualStudioVersion = 17.14.36408.4
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "100MillionPixels", "100MillionPixels.csproj", "{2ECE06E4-E59C-445C-B2B3-0DF6F89DC17D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "100MillionPixels", "src\100MillionPixels\100MillionPixels.csproj", "{5997B4C9-56FA-9FF2-2329-AB4CF3B0DA4D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -11,10 +11,10 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{2ECE06E4-E59C-445C-B2B3-0DF6F89DC17D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{2ECE06E4-E59C-445C-B2B3-0DF6F89DC17D}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{2ECE06E4-E59C-445C-B2B3-0DF6F89DC17D}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{2ECE06E4-E59C-445C-B2B3-0DF6F89DC17D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5997B4C9-56FA-9FF2-2329-AB4CF3B0DA4D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5997B4C9-56FA-9FF2-2329-AB4CF3B0DA4D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5997B4C9-56FA-9FF2-2329-AB4CF3B0DA4D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5997B4C9-56FA-9FF2-2329-AB4CF3B0DA4D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

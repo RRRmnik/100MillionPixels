@@ -1,23 +1,25 @@
 ﻿using Raylib_cs;
 using System.Numerics;
-using System.Diagnostics;
 
 namespace _100MillionPixels
 {
     public class Program
     {
         const float CameraSpeed = 500.0f;
-        const float ZoomAnimationSpeed = 30.0f;
+        const float ZoomAnimationSpeed = 20.0f;
 
-        static Camera2D camera = new Camera2D(Vector2.Zero, new Vector2(World.CenterX, World.CenterY), 0.0f, 10.0f);
+        private static Camera2D _camera = new Camera2D(Vector2.Zero, new Vector2(World.CenterX, World.CenterY), 0.0f, 10.0f);
+
+        private static int _score;
 
         static void Main()
         {
             Raylib.SetConfigFlags(ConfigFlags.ResizableWindow);
+            Raylib.SetConfigFlags(ConfigFlags.VSyncHint);
             Raylib.InitWindow(800, 600, "sosat amerika");
 
             World world = new World();
-            float cameraTargetZoom = camera.Zoom;
+            float cameraTargetZoom = _camera.Zoom;
 
             float timeScale = 1.0f;
 
@@ -25,6 +27,8 @@ namespace _100MillionPixels
             Vector2 startDragBalls = Vector2.Zero;
 
             BallType selectedBall = BallType.PIERCING;
+
+            world.OnHit += AddScore;
 
             world.Generate();
 
@@ -47,17 +51,19 @@ namespace _100MillionPixels
 
                 float dt = Raylib.GetFrameTime();
 
+                float dtScaled = dt * timeScale;
+
                 Vector2 movingVector = new Vector2(
                     Raylib.IsKeyDown(KeyboardKey.D) - Raylib.IsKeyDown(KeyboardKey.A),
                     Raylib.IsKeyDown(KeyboardKey.S) - Raylib.IsKeyDown(KeyboardKey.W)
                 );
                 if (movingVector != Vector2.Zero) movingVector = Vector2.Normalize(movingVector);
-                camera.Target += movingVector * dt * CameraSpeed / camera.Zoom;
+                _camera.Target += movingVector * dt * CameraSpeed / _camera.Zoom;
 
                 float wheel = Raylib.GetMouseWheelMoveV().Y;
                 if (Raylib.IsKeyDown(KeyboardKey.G))
                 {
-                    float timeScaleSpeed = 1.25f;
+                    const float timeScaleSpeed = 1.25f;
                     timeScale *= MathF.Pow(timeScaleSpeed, wheel);
                     //timeScale += wheel * 0.25f;
 
@@ -66,35 +72,35 @@ namespace _100MillionPixels
                     wheel = 0.0f;
                 }
 
-                const float zoomSpeed = 1.25f;
                 if (wheel != 0.0f)
                 {
+                    const float zoomSpeed = 1.25f;
                     const float defaultZoom = 2.0f;
                     float maxZoom = defaultZoom * MathF.Pow(zoomSpeed, 20);
 
                     cameraTargetZoom *= MathF.Pow(zoomSpeed, wheel);
                     cameraTargetZoom = Math.Clamp(cameraTargetZoom, defaultZoom, maxZoom);
                 }
-                float zoomBefore = camera.Zoom;
-                camera.Zoom = Raymath.Lerp(camera.Zoom, cameraTargetZoom, Raymath.Clamp01(dt * ZoomAnimationSpeed));
-                float zoomAfter = camera.Zoom;
+                float zoomBefore = _camera.Zoom;
+                _camera.Zoom = Raymath.Lerp(_camera.Zoom, cameraTargetZoom, Raymath.Clamp01(dt * ZoomAnimationSpeed));
+                float zoomAfter = _camera.Zoom;
                 if (zoomBefore != zoomAfter)
                 {
                     Vector2 mouseScreen = Raylib.GetMousePosition();
-                    camera.Target += (mouseScreen - camera.Offset) * (1.0f / zoomBefore - 1.0f / zoomAfter);
+                    _camera.Target += (mouseScreen - _camera.Offset) * (1.0f / zoomBefore - 1.0f / zoomAfter);
                 }
-
-                world.Tick(dt);
 
                 foreach (Ball ball in balls)
                 {
-                    ball.Tick(dt * timeScale, world);
+                    ball.Tick(dtScaled, timeScale, world);
                 }
+
+                world.Tick(dtScaled);
 
                 if (Raylib.IsMouseButtonDown(MouseButton.Middle) || Raylib.IsMouseButtonDown(MouseButton.Right))
                 {
                     Vector2 delta = Raylib.GetMouseDelta();
-                    camera.Target -= delta / camera.Zoom;
+                    _camera.Target -= delta / _camera.Zoom;
                 }
 
                 Vector2 mouseWorld = GetMouseWorldPosition();
@@ -104,22 +110,36 @@ namespace _100MillionPixels
                 if (Raylib.IsMouseButtonReleased(MouseButton.Left))
                 {
                     drag = mouseWorld - startDragBalls;
-                    //Vector2 velocity = -drag * 10.0f;
-                    Vector2 velocity = -drag + Vector2.One * 0.01f;
+                    Vector2 direction = -drag;
+                    if (direction != Vector2.Zero)
+                    {
+                        balls.Add(new Ball(selectedBall, startDragBalls, direction));
+                    }
 
-                    balls.Add(new Ball(selectedBall, startDragBalls, velocity));
+                    if (Raylib.IsKeyDown(KeyboardKey.B))
+                    {
+                        for (int i = 0; i < 100; i++)
+                        {
+                            direction = new Vector2(
+                                Random.Shared.NextSingle() - 0.5f,
+                                Random.Shared.NextSingle() - 0.5f
+                            );
+                            direction = Vector2.Normalize(direction);
+                            balls.Add(new Ball(selectedBall, startDragBalls, direction));
+                        }
+                    }
                 }
 
                 Raylib.BeginDrawing();
 
                 Raylib.ClearBackground(new Color(45, 40, 50));
 
-                Raylib.BeginMode2D(camera);
+                Raylib.BeginMode2D(_camera);
 
                 //Raylib.DrawRectangleLines(0, 0, World.Width, World.Height, Color.White);
 
-                Rectangle viewRect = GetCameraViewRect(camera);
-                world.Draw(viewRect);
+                Rectangle viewRect = GetCameraViewRect(_camera);
+                world.Draw(viewRect, Raylib.GetFPS());
 
                 foreach (Ball ball in balls)
                 {
@@ -135,9 +155,11 @@ namespace _100MillionPixels
 
                 DrawTextOutline($"Selected: {selectedBall}", 10, 10, 40, Ball.GetColor(selectedBall));
 
+                DrawTextOutline($"Score: {_score}", 10, 50, 40, Color.White);
+
                 if (MathF.Abs(timeScale - 1.0f) > 0.01f)
                 {
-                    DrawTextOutline($"x{timeScale:F1}", 10, 50, 40, Color.Yellow);
+                    DrawTextOutline($"x{timeScale:F1}", 10, 90, 40, Color.Yellow);
                 }
 
 
@@ -145,6 +167,11 @@ namespace _100MillionPixels
             }
 
             Raylib.CloseWindow();
+        }
+
+        public static void AddScore(int score)
+        {
+            _score += score;
         }
 
         const int TextShadowDistance = 4;
@@ -175,12 +202,12 @@ namespace _100MillionPixels
             int screenWidth = Raylib.GetScreenWidth();
             int screenHeight = Raylib.GetScreenHeight();
 
-            camera.Offset = new Vector2(screenWidth / 2, screenHeight / 2);
+            _camera.Offset = new Vector2(screenWidth / 2, screenHeight / 2);
         }
 
         public static Vector2 GetMouseWorldPosition()
         {
-            return Raylib.GetScreenToWorld2D(Raylib.GetMousePosition(), camera);
+            return Raylib.GetScreenToWorld2D(Raylib.GetMousePosition(), _camera);
         }
 
         public static Rectangle GetCameraViewRect(Camera2D camera)
